@@ -115,7 +115,7 @@ void BufMgr::allocBuf(FrameId & frame)
 }
 
 /**
- * Given a file object and page number, will return a page object
+ * given a file object and page number, will return a page object
  *  in memory. Whether the page had to be read from disk or was already there
  *  will be transparent to the caller.
  *
@@ -144,117 +144,53 @@ void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
 */
 void BufMgr::unPinPage(File* file, const PageId pageNo, const bool dirty) 
 {
-	// Lookup the page.
-	FrameId frameNo = -1;
-	hashTable.lookup(file, pageNo, &frameId);
-	if (frameNo == -1) {
-		return; // Not found.
-	}
-	if ( bufDescTable[frameNo].pinCnt == 0 ) {
-		throw PageNotPinnedException;
-	}
-	(bufDescTable[frameNo].pinCnt)--;
-	if (dirty) bufDescTable[frameNo].dirtyBit = true;
-/*
-// This is ok, but it is slow. Why iterate over the entire table when we can use a hash?
-
-// Also, we don't need to throw an exception if not found...
-
 	bool found = false;
 	for (std::uint32_t i = 0; i < numBufs; i++)
 	{
-		BufDesc* tmpbuf = &(bufDescTable[i]);
+		tmpbuf = &(bufDescTable[i]);
 		if (tmpbuf->file == file && tmpbuf->pageNo == pageNo)
 		{
-			if (tmpbuf->pinCnt == 0) {
-				throw PageNotePinedException;
-			}
 			found = true;
 			(tmpbuf->pinCnt)--;
-			if (dirty) tmpbuf->dirtyBit = true;
-			
 		}
 	}
 	if (!found) {
 		throw InvalidPageException();
 	}
-*/
 }
 
 /*
- * Writes the file to the disk.
- *
- * Iterates over all page frames, flushing the (dirty)
- *  ones that belong to the file to disk.
+ Writes the file to the disk.
+ Iterate over all page frames, flushing the dirty ones to disk.
 */
 void BufMgr::flushFile(const File* file) 
 {
-	BufDesc* tmpbuf;
+  BufDesc* tmpbuf;
+//      int validFrames = 0;
 
-	for (int i=0; i < numBufs; i++) {
-	        tmpbuf = &(bufDescTable[i]);
+  for (std::uint32_t i = 0; i < numBufs; i++)
+        {
+        tmpbuf = &(bufDescTable[i]);
 
-		// no need to examine this
-	        if ( !tmpbuf->valid || tmpbuf->file != file) {	
-			// ERROR! Page can't belong to
-			// a file if it's invalid!
-			if (tmpbuf->file == file) {
-				throw BadBufferException;
-			}
-			// We're good. Ignore this invalid buffer frame.
-			else continue;
+        if (tmpbuf->valid != true)
+		continue; // no need to examine this
+	if (tmpbuf->file != file)
+		continue;
+	if (tmpbuf->dirty)
+		file.writePage(tmpbuf.pageNo);
+  }
 
-		}
-
-		// ERROR! Cannot write a pinned page!
-		if (tmpbuf->pinCnt != 0) {
-			throw PagePinnedException;
-		}
-		// Implicit else: deal with this file's page.
-		if (tmpbuf->dirty) {
-			file.writePage(tmpbuf.pageNo);
-		}
-		// Remove page from the hash table.
-		hashtable.remove(file, pageNo);
-
-		// Reset the buffer frame.
-		bufDescTable[i].Clear();
-	}
-
-
+  //      std::cout << "Total Number of Valid Frames:" << validFrames << "\n";	
 }
 
 void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page) 
 {
-	page = file->allocatePage();
-	FrameId frameNo;
-	allocBuf(&frameNo);
-	pageNo = page->page_number();
-
-	hashTable.insert(file, pageNo, frameNo); // reference this page in our hash table.
-	bufDescTable[frameNo].Set(file, pageNo); // record this usage in our buffer pool.
-
-/*
-// Where is the new buffer frame ID?
 	page = &file->allocatePage();
 	pageNo = page->page_number();
-*/
 }
 
 void BufMgr::disposePage(File* file, const PageId PageNo)
 {
-// Free the buffer frame.
-	FrameId frameNo = -1;
-        hashTable.lookup(file, PageNo, &frameNo);
-	if (frameNo == -1) return;  // not found
-	bufDescTable[frameNo].Clear();
-	hashTable.remove(file, PageNo);
-// Delete the page.
-	// don't need to check valid since we're deleting.
-	file.deletePage(PageNo);
-/*
-//Should check metadata before deleting the page.
-//Should remove the hashtable entry.
     file.deletePage(PageNo);
     for (std::uint32_t i = 0; i < numBufs; i++)
     {
@@ -264,7 +200,6 @@ void BufMgr::disposePage(File* file, const PageId PageNo)
       if (tmpbuf->file == file && tmpbuf->pageNo == PageNo)
         tmpbuf->clear();
     }
-*/
 }
 
 void BufMgr::printSelf(void) 
