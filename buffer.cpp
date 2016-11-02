@@ -38,14 +38,9 @@ BufMgr::BufMgr(std::uint32_t bufs)
  *  Clean up the class; delete dynamically allocated memory.
 */
 BufMgr::~BufMgr() {
-	for (int i=0; i < bufs; i++) {
-		delete bufDescTable[i];
-		delete bufPool[i];
-	}
-
-	for (int j=0; j < htsize; j++) {
-		delete hashTable[j];
-	}
+	delete [] bufDescTable;
+	delete [] bufPool;
+	delete [] hashTable;
 }
 
 /**
@@ -69,19 +64,20 @@ void BufMgr::allocBuf(FrameId & frame)
 {
 	// Check that all frames aren't pinned.
 	int numPinned=0;
+	int bufs = sizeof ( bufDescTable );
 	for (int i=0; i < bufs; i++) {
-		if (bufDescTable[i]->pinCnt > 0)
+		if (bufDescTable[i].pinCnt > 0)
 			numPinned++;
 	}
 	if (numPinned == bufs) {
-		throw BufferExceededException;
+		throw BufferExceededException();
 	}
 
 	// Run the clock algorithm.
 	BufDesc* tmpbuf;
 	for (int i=0; i < bufs*2; i++) {
 		advanceClock();
-		tmpbuf = bufDescTable[clockHand];
+		tmpbuf = &bufDescTable[clockHand];
 		if ( !tmpbuf->valid ) { // Use this; done.
 			// Leave blank; will be set by readPage()
 			tmpbuf->Set(NULL, Page::INVALID_NUMBER);
@@ -92,15 +88,15 @@ void BufMgr::allocBuf(FrameId & frame)
 			++numPinned;
 			continue;
 		} // ..and referenced ones.
-		else if ( tmpbuf->refBit ) {
-			tmpbuf->refBit = false;
+		else if ( tmpbuf->refbit ) {
+			tmpbuf->refbit = false;
 			continue;
 		} // found a free one.
 		else {
 			if (tmpbuf->dirty) {
 				// it has to have a page and file.
-				PageId page = tmpbuf->pageNo;
-				tmpbuf->file->WritePage(pageNo);
+				FrameId frameNo = tmpbuf->frameNo;
+				tmpbuf->file->writePage(bufPool[frameNo]);
 			}
 			frame = tmpbuf->frameNo;
 			// Leave blank for ReadPage()
@@ -124,16 +120,21 @@ void BufMgr::allocBuf(FrameId & frame)
 
 void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
 {
+	FrameId frameNo = -1;
 	try {
-		hashTable.lookup(file, pageNo, frameNo);
+		hashTable->lookup(file, pageNo, frameNo);
+		if (frameNo == -1) { // not found
+			return;
+		}
 		bufDescTable[frameNo].pinCnt++;
-		bufDescTable[frameNo].refBit = true;
-		page = bufDescTable[frameNo].file;
+		bufDescTable[frameNo].refbit = true;
+		page = &bufPool[frameNo];
 	} catch (HashNotFoundException) {
 		BufMgr::allocBuf(frameNo);
-		hashTable.insert(file, pageNo, frameNo);
+		hashTable->insert(file, pageNo, frameNo);
 		bufDescTable[frameNo].Set(file, pageNo);
-		page = file->readPage(pageNo);
+		File theFile = *file;
+		*page = theFile.readPage(pageNo);
 	}
 }
 
@@ -146,15 +147,19 @@ void BufMgr::unPinPage(File* file, const PageId pageNo, const bool dirty)
 {
 	// Lookup the page.
 	FrameId frameNo = -1;
-	hashTable.lookup(file, pageNo, &frameId);
+	hashTable->lookup(file, pageNo, frameNo);
 	if (frameNo == -1) {
 		return; // Not found.
 	}
 	if ( bufDescTable[frameNo].pinCnt == 0 ) {
-		throw PageNotPinnedException;
+		throw PageNotPinnedException(
+			file->filename(),
+			pageNo,
+			frameNo
+		);
 	}
 	(bufDescTable[frameNo].pinCnt)--;
-	if (dirty) bufDescTable[frameNo].dirtyBit = true;
+	if (dirty) bufDescTable[frameNo].dirty = true;
 /*
 // This is ok, but it is slow. Why iterate over the entire table when we can use a hash?
 
@@ -199,7 +204,12 @@ void BufMgr::flushFile(const File* file)
 			// ERROR! Page can't belong to
 			// a file if it's invalid!
 			if (tmpbuf->file == file) {
-				throw BadBufferException;
+				throw BadBufferException(
+					tmpbuf->frameNo,
+					tmpbuf->dirty,
+					tmpbuf->valid,
+					tmpbuf->refbit
+				);
 			}
 			// We're good. Ignore this invalid buffer frame.
 			else continue;
@@ -208,14 +218,20 @@ void BufMgr::flushFile(const File* file)
 
 		// ERROR! Cannot write a pinned page!
 		if (tmpbuf->pinCnt != 0) {
-			throw PagePinnedException;
+			throw PagePinnedException(
+				file->filename(),
+				tmpbuf->pageNo,
+				tmpbuf->frameNo
+			);
 		}
 		// Implicit else: deal with this file's page.
 		if (tmpbuf->dirty) {
-			file.writePage(tmpbuf.pageNo);
+			FrameId frameNo = tmpbuf->frameNo;
+			File f = bufDescTable[frameNo].file;
+			f->writePage(bufPool[frameNo]);
 		}
 		// Remove page from the hash table.
-		hashtable.remove(file, pageNo);
+		hashTable->remove(file, tmpbuf->pageNo);
 
 		// Reset the buffer frame.
 		bufDescTable[i].Clear();
@@ -226,12 +242,12 @@ void BufMgr::flushFile(const File* file)
 
 void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page) 
 {
-	page = file->allocatePage();
+	*page = file->allocatePage();
 	FrameId frameNo;
-	allocBuf(&frameNo);
+	allocBuf(frameNo);
 	pageNo = page->page_number();
 
-	hashTable.insert(file, pageNo, frameNo); // reference this page in our hash table.
+	hashTable->insert(file, pageNo, frameNo); // reference this page in our hash table.
 	bufDescTable[frameNo].Set(file, pageNo); // record this usage in our buffer pool.
 
 /*
@@ -245,16 +261,16 @@ void BufMgr::disposePage(File* file, const PageId PageNo)
 {
 // Free the buffer frame.
 	FrameId frameNo = -1;
-        hashTable.lookup(file, PageNo, &frameNo);
+        hashTable->lookup(file, PageNo, frameNo);
 	if (frameNo == -1) return;  // not found
 	bufDescTable[frameNo].Clear();
-	hashTable.remove(file, PageNo);
+	hashTable->remove(file, PageNo);
 // Delete the page.
 	// don't need to check valid since we're deleting.
-	file.deletePage(PageNo);
+	file->deletePage(PageNo);
 /*
 //Should check metadata before deleting the page.
-//Should remove the hashtable entry.
+//Should remove the hash table entry.
     file.deletePage(PageNo);
     for (std::uint32_t i = 0; i < numBufs; i++)
     {
