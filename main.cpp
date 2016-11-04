@@ -168,11 +168,14 @@ void testBufMgr()
 
 void test1()
 {
+	std::cout << "Hello from test 1!\n";
 	//Allocating pages in a file...
 	for (i = 0; i < num; i++)
 	{
 		bufMgr->allocPage(file1ptr, pid[i], page);
+		std::cout<<"Page #" << i << "\n";
 		sprintf((char*)tmpbuf, "test.1 Page %d %7.1f", pid[i], (float)pid[i]);
+		std::cout << tmpbuf << "\n";
 		rid[i] = page->insertRecord(tmpbuf);
 		bufMgr->unPinPage(file1ptr, pid[i], true);
 	}
@@ -184,7 +187,9 @@ void test1()
 		sprintf((char*)&tmpbuf, "test.1 Page %d %7.1f", pid[i], (float)pid[i]);
 		if(strncmp(page->getRecord(rid[i]).c_str(), tmpbuf, strlen(tmpbuf)) != 0)
 		{
-			PRINT_ERROR("ERROR :: CONTENTS DID NOT MATCH");
+			sprintf((char*)&tmpbuf, "DID NOT MATCH %d", i);
+			PRINT_ERROR(tmpbuf);
+//			PRINT_ERROR("ERROR :: CONTENTS DID NOT MATCH");
 		}
 		bufMgr->unPinPage(file1ptr, pid[i], false);
 	}
