@@ -1,6 +1,6 @@
 #include <iostream>
 #include <stdlib.h>
-//#include <stdio.h>
+#include <stdio.h>
 #include <cstring>
 #include <memory>
 #include "page.h"
@@ -187,9 +187,9 @@ void test1()
 		sprintf((char*)&tmpbuf, "test.1 Page %d %7.1f", pid[i], (float)pid[i]);
 		if(strncmp(page->getRecord(rid[i]).c_str(), tmpbuf, strlen(tmpbuf)) != 0)
 		{
-			sprintf((char*)&tmpbuf, "DID NOT MATCH %d", i);
-			PRINT_ERROR(tmpbuf);
-//			PRINT_ERROR("ERROR :: CONTENTS DID NOT MATCH");
+//			sprintf((char*)&tmpbuf, "DID NOT MATCH %d", i);
+//			PRINT_ERROR(tmpbuf);
+			PRINT_ERROR("ERROR :: CONTENTS DID NOT MATCH");
 		}
 		bufMgr->unPinPage(file1ptr, pid[i], false);
 	}
@@ -282,6 +282,7 @@ void test5()
 	for (i = 0; i < num; i++) {
 		bufMgr->allocPage(file5ptr, pid[i], page);
 		sprintf((char*)tmpbuf, "test.5 Page %d %7.1f", pid[i], (float)pid[i]);
+	printf("%s\n",tmpbuf);
 		rid[i] = page->insertRecord(tmpbuf);
 	}
 
